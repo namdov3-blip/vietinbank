@@ -5,6 +5,7 @@ import { AuditLogItem, User, InterestHistoryLog } from '../types';
 import { Shield, UserPlus, FileClock, History, Save, CheckSquare, Square, Lock, Key, Edit, X, Download, Building2, Trash2 } from 'lucide-react';
 import { formatCurrency, exportAuditLogsToExcel, formatNumberWithComma, parseNumberFromComma, toVNTime, VN_TIMEZONE } from '../utils/helpers';
 import { format as formatTz } from 'date-fns-tz';
+import { api } from '../services/api';
 
 interface AdminProps {
   auditLogs: AuditLogItem[];
@@ -57,6 +58,27 @@ export const Admin: React.FC<AdminProps> = ({
 
   const [tempBankInterestRate, setTempBankInterestRate] = useState(bankInterestRate);
   const [bankInterestRateInput, setBankInterestRateInput] = useState(formatNumberWithComma(bankInterestRate));
+
+  // Rate change settings state
+  const [rateChangeDate, setRateChangeDate] = useState<string>('');
+  const [rateBefore, setRateBefore] = useState<string>('');
+  const [rateAfter, setRateAfter] = useState<string>('');
+
+  // Load rate change settings on mount
+  React.useEffect(() => {
+    api.settings.getInterestRate().then(res => {
+      if (res.data?.interestRateChangeDate) {
+        const date = new Date(res.data.interestRateChangeDate);
+        setRateChangeDate(date.toISOString().split('T')[0]);
+      }
+      if (res.data?.interestRateBefore !== null && res.data?.interestRateBefore !== undefined) {
+        setRateBefore(formatNumberWithComma(res.data.interestRateBefore));
+      }
+      if (res.data?.interestRateAfter !== null && res.data?.interestRateAfter !== undefined) {
+        setRateAfter(formatNumberWithComma(res.data.interestRateAfter));
+      }
+    }).catch(err => console.error('Failed to load rate change settings:', err));
+  }, []);
 
   const availablePermissions = [
     { id: 'dashboard', label: 'Tổng quan (Dashboard)' },
@@ -180,6 +202,43 @@ export const Admin: React.FC<AdminProps> = ({
         target: 'Hệ thống',
         details: `Thay đổi lãi suất ngân hàng từ ${bankInterestRate}% sang ${parsed}%`
       }]);
+    }
+  };
+
+  const handleSaveRateChangeSettings = async () => {
+    try {
+      const parsedBefore = rateBefore ? parseNumberFromComma(rateBefore) : null;
+      const parsedAfter = rateAfter ? parseNumberFromComma(rateAfter) : null;
+      
+      if (!rateChangeDate || parsedBefore === null || parsedAfter === null) {
+        alert('Vui lòng điền đầy đủ thông tin: Mốc thay đổi, Lãi suất trước mốc, và Lãi suất sau mốc');
+        return;
+      }
+
+      await api.settings.updateRateChangeSettings({
+        interestRateChangeDate: rateChangeDate,
+        interestRateBefore: parsedBefore,
+        interestRateAfter: parsedAfter
+      });
+
+      alert('Đã cập nhật cấu hình mốc thay đổi lãi suất thành công!');
+
+      // Log audit
+      setAuditLogs(prev => [...prev, {
+        id: `audit-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        actor: currentUser.name,
+        role: currentUser.role,
+        action: 'Cấu hình mốc thay đổi lãi suất',
+        target: 'Hệ thống',
+        details: `Mốc: ${rateChangeDate}, Trước: ${parsedBefore}%, Sau: ${parsedAfter}%`
+      }]);
+
+      // Reload page to refresh settings
+      window.location.reload();
+    } catch (err: any) {
+      console.error('Failed to save rate change settings:', err);
+      alert('Lỗi khi lưu cấu hình: ' + (err.message || 'Unknown error'));
     }
   };
 
@@ -647,6 +706,61 @@ export const Admin: React.FC<AdminProps> = ({
               </p>
             </GlassCard>
 
+            <GlassCard className="border-slate-300 shadow-md p-8">
+              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-3">Cấu hình mốc thay đổi lãi suất</label>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-2">Mốc thay đổi</label>
+                  <input
+                    type="date"
+                    value={rateChangeDate}
+                    onChange={(e) => setRateChangeDate(e.target.value)}
+                    className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2.5 text-sm font-bold text-black focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 shadow-inner transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-2">Lãi suất trước mốc (%)</label>
+                  <input
+                    type="text"
+                    value={rateBefore}
+                    onChange={(e) => {
+                      setRateBefore(e.target.value);
+                    }}
+                    onBlur={(e) => {
+                      const parsed = parseNumberFromComma(e.target.value);
+                      setRateBefore(formatNumberWithComma(parsed));
+                    }}
+                    placeholder="Ví dụ: 0,1 hoặc 0.1"
+                    className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2.5 text-sm font-bold text-black focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 shadow-inner transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-2">Lãi suất sau mốc (%)</label>
+                  <input
+                    type="text"
+                    value={rateAfter}
+                    onChange={(e) => {
+                      setRateAfter(e.target.value);
+                    }}
+                    onBlur={(e) => {
+                      const parsed = parseNumberFromComma(e.target.value);
+                      setRateAfter(formatNumberWithComma(parsed));
+                    }}
+                    placeholder="Ví dụ: 0,2 hoặc 0.2"
+                    className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2.5 text-sm font-bold text-black focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 shadow-inner transition-all"
+                  />
+                </div>
+                <button
+                  onClick={handleSaveRateChangeSettings}
+                  className="w-full bg-purple-600 text-white px-6 py-2.5 rounded-lg text-sm font-bold hover:bg-purple-700 shadow-lg shadow-purple-200 transition-all flex items-center justify-center gap-2"
+                >
+                  <Save size={16} /> Lưu cấu hình mốc thay đổi
+                </button>
+              </div>
+              <p className="text-[11px] font-medium text-slate-600 mt-3 leading-relaxed">
+                * Cấu hình này cho phép hệ thống tự động tính lãi với 2 mức khác nhau trước và sau mốc thay đổi.
+              </p>
+            </GlassCard>
 
           </div>
 

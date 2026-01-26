@@ -35,7 +35,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 success: true,
                 data: {
                     interestRate: settings.interestRate,
-                        bankInterestRate: settings.bankInterestRate ?? 0.5,
+                    bankInterestRate: settings.bankInterestRate ?? 0.5,
+                    interestRateChangeDate: settings.interestRateChangeDate,
+                    interestRateBefore: settings.interestRateBefore,
+                    interestRateAfter: settings.interestRateAfter,
                     interestHistory: settings.interestHistory || []
                 }
             });
@@ -46,10 +49,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const payload = await authMiddleware(req, res, ['Admin', 'SuperAdmin']);
             if (!payload) return;
 
-            const { interestRate } = req.body;
+            const { 
+                interestRate, 
+                interestRateChangeDate, 
+                interestRateBefore, 
+                interestRateAfter 
+            } = req.body;
 
-            if (interestRate === undefined || interestRate < 0) {
+            // Validate interestRate if provided
+            if (interestRate !== undefined && interestRate < 0) {
                 return res.status(400).json({ error: 'Lãi suất không hợp lệ' });
+            }
+
+            // Validate rate change configuration
+            if (interestRateChangeDate && (interestRateBefore === undefined || interestRateAfter === undefined)) {
+                return res.status(400).json({ error: 'Phải cung cấp cả lãi suất trước và sau mốc thay đổi' });
             }
 
             let settings = await (Settings as any).findOne({ key: 'global' });
@@ -58,36 +72,75 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!settings) {
                 settings = new Settings({
                     key: 'global',
-                    interestRate,
+                    interestRate: interestRate || 6.5,
                     interestHistory: [],
                     bankOpeningBalance: 0
                 });
             }
 
-            // Add to history
-            settings.interestHistory.push({
-                timestamp: new Date(),
-                oldRate,
-                newRate: interestRate,
-                actor: payload.name
-            });
+            // Update interest rate if provided
+            if (interestRate !== undefined) {
+                // Add to history only if rate actually changed
+                if (settings.interestRate !== interestRate) {
+                    settings.interestHistory.push({
+                        timestamp: new Date(),
+                        oldRate: settings.interestRate,
+                        newRate: interestRate,
+                        actor: payload.name
+                    });
+                }
+                settings.interestRate = interestRate;
+            }
 
-            settings.interestRate = interestRate;
+            // Update rate change configuration
+            if (interestRateChangeDate !== undefined) {
+                settings.interestRateChangeDate = interestRateChangeDate ? new Date(interestRateChangeDate) : undefined;
+            }
+            if (interestRateBefore !== undefined) {
+                settings.interestRateBefore = interestRateBefore;
+            }
+            if (interestRateAfter !== undefined) {
+                settings.interestRateAfter = interestRateAfter;
+            }
+
             await settings.save();
 
-            await (AuditLog as any).create({
-                actor: payload.name,
-                role: payload.role,
-                action: 'Thay đổi lãi suất',
-                target: 'Cấu hình hệ thống',
-                details: `Thay đổi lãi suất từ ${oldRate}% sang ${interestRate}%`
-            });
+            // Create audit log
+            const changes: string[] = [];
+            if (interestRate !== undefined && settings.interestRate !== oldRate) {
+                changes.push(`Lãi suất: ${oldRate}% → ${settings.interestRate}%`);
+            }
+            if (interestRateChangeDate !== undefined) {
+                const changeDateStr = settings.interestRateChangeDate 
+                    ? new Date(settings.interestRateChangeDate).toLocaleDateString('vi-VN')
+                    : 'Không có';
+                changes.push(`Mốc thay đổi: ${changeDateStr}`);
+            }
+            if (interestRateBefore !== undefined) {
+                changes.push(`Lãi suất trước mốc: ${settings.interestRateBefore}%`);
+            }
+            if (interestRateAfter !== undefined) {
+                changes.push(`Lãi suất sau mốc: ${settings.interestRateAfter}%`);
+            }
+
+            if (changes.length > 0) {
+                await (AuditLog as any).create({
+                    actor: payload.name,
+                    role: payload.role,
+                    action: 'Cập nhật cấu hình lãi suất',
+                    target: 'Cấu hình hệ thống',
+                    details: changes.join('; ')
+                });
+            }
 
             return res.status(200).json({
                 success: true,
                 data: {
                     interestRate: settings.interestRate,
                     bankInterestRate: settings.bankInterestRate ?? 0.5,
+                    interestRateChangeDate: settings.interestRateChangeDate,
+                    interestRateBefore: settings.interestRateBefore,
+                    interestRateAfter: settings.interestRateAfter,
                     interestHistory: settings.interestHistory
                 }
             });

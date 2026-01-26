@@ -137,6 +137,182 @@ export const calculateInterest = (principal: number, ratePerYear: number, baseDa
   return totalInterest;
 };
 
+/**
+ * Tính lãi với mốc thay đổi lãi suất (ví dụ: 01/01/2026)
+ * Tính liên tục theo từng kỳ tháng, áp dụng lãi suất phù hợp cho từng kỳ
+ * @param principal - Số tiền gốc ban đầu
+ * @param baseDateStr - Ngày bắt đầu tính lãi
+ * @param endDate - Ngày kết thúc tính lãi
+ * @param rateChangeDateStr - Ngày thay đổi lãi suất (ví dụ: 01/01/2026)
+ * @param rateBefore - Lãi suất trước mốc (%)
+ * @param rateAfter - Lãi suất sau mốc (%)
+ * @returns Tổng lãi và chi tiết 2 giai đoạn
+ */
+export const calculateInterestWithRateChange = (
+    principal: number,
+    baseDateStr: any,
+    endDate: Date = getVNNow(),
+    rateChangeDateStr: string | Date,
+    rateBefore: number,
+    rateAfter: number
+): { 
+    totalInterest: number; 
+    interestBefore: number; 
+    interestAfter: number;
+    balanceAtChange: number; // Số dư tại mốc thay đổi (gốc + lãi trước mốc)
+} => {
+    if (!baseDateStr) {
+        return {
+            totalInterest: 0,
+            interestBefore: 0,
+            interestAfter: 0,
+            balanceAtChange: principal
+        };
+    }
+
+    // Handle different date input types
+    let baseDate: Date;
+    if (baseDateStr instanceof Date) {
+        baseDate = new Date(baseDateStr);
+    } else if (typeof baseDateStr === 'object') {
+        return {
+            totalInterest: 0,
+            interestBefore: 0,
+            interestAfter: 0,
+            balanceAtChange: principal
+        };
+    } else {
+        baseDate = new Date(baseDateStr);
+    }
+
+    // Validate baseDate
+    if (isNaN(baseDate.getTime())) {
+        return {
+            totalInterest: 0,
+            interestBefore: 0,
+            interestAfter: 0,
+            balanceAtChange: principal
+        };
+    }
+
+    const baseDateVN = getVNStartOfDay(baseDate);
+    const endDateVN = getVNStartOfDay(endDate);
+    const changeDateVN = getVNStartOfDay(rateChangeDateStr);
+
+    // Nếu endDate trước mốc thay đổi, chỉ tính với rateBefore
+    if (endDateVN <= changeDateVN) {
+        const interest = calculateInterest(principal, rateBefore, baseDateVN, endDateVN);
+        return {
+            totalInterest: interest,
+            interestBefore: interest,
+            interestAfter: 0,
+            balanceAtChange: principal + interest
+        };
+    }
+
+    // Nếu baseDate sau mốc thay đổi, chỉ tính với rateAfter
+    if (baseDateVN >= changeDateVN) {
+        const interest = calculateInterest(principal, rateAfter, baseDateVN, endDateVN);
+        return {
+            totalInterest: interest,
+            interestBefore: 0,
+            interestAfter: interest,
+            balanceAtChange: principal
+        };
+    }
+
+    // Tính lãi liên tục theo từng kỳ tháng, áp dụng lãi suất phù hợp cho từng kỳ
+    // Logic: Lãi nhập gốc theo từng kỳ tháng (từ đầu tháng đến đầu tháng tiếp theo)
+    let currentBalance = principal;
+    let totalInterest = 0;
+    let interestBefore = 0;
+    let interestAfter = 0;
+    let currentDate = new Date(baseDateVN);
+    let balanceAtChange = principal;
+
+    while (currentDate < endDateVN) {
+        // Xác định ngày kết thúc kỳ (ngày đầu tháng tiếp theo)
+        const periodEnd = new Date(currentDate);
+        periodEnd.setMonth(periodEnd.getMonth() + 1);
+        periodEnd.setDate(1);
+        const periodEndVN = getVNStartOfDay(periodEnd);
+
+        // Nếu periodEnd vượt quá endDate, dùng endDate
+        const actualPeriodEnd = periodEndVN > endDateVN ? endDateVN : periodEndVN;
+        
+        // Xác định lãi suất cho kỳ này
+        // Nếu kỳ bắt đầu từ trước mốc thay đổi và kết thúc sau mốc, cần chia kỳ
+        const periodStartsBeforeChange = currentDate < changeDateVN;
+        const periodEndsAfterChange = actualPeriodEnd > changeDateVN;
+        const changeDateIsInPeriod = periodStartsBeforeChange && periodEndsAfterChange;
+        
+        if (changeDateIsInPeriod) {
+            // Kỳ này chứa mốc thay đổi: chia thành 2 phần
+            // Phần 1: Từ currentDate đến changeDate (dùng rateBefore)
+            const daysBeforeChange = Math.floor(
+                (changeDateVN.getTime() - currentDate.getTime()) / (1000 * 3600 * 24)
+            );
+            if (daysBeforeChange > 0) {
+                const dailyRateBefore = (rateBefore / 100) / 365;
+                const periodInterestBefore = Math.round(currentBalance * dailyRateBefore * daysBeforeChange);
+                interestBefore += periodInterestBefore;
+                totalInterest += periodInterestBefore;
+                currentBalance += periodInterestBefore;
+                balanceAtChange = currentBalance; // Lưu số dư tại mốc thay đổi
+            }
+            
+            // Phần 2: Từ changeDate đến actualPeriodEnd (dùng rateAfter)
+            const daysAfterChange = Math.floor(
+                (actualPeriodEnd.getTime() - changeDateVN.getTime()) / (1000 * 3600 * 24)
+            );
+            if (daysAfterChange > 0) {
+                const dailyRateAfter = (rateAfter / 100) / 365;
+                const periodInterestAfter = Math.round(currentBalance * dailyRateAfter * daysAfterChange);
+                interestAfter += periodInterestAfter;
+                totalInterest += periodInterestAfter;
+                currentBalance += periodInterestAfter;
+            }
+        } else {
+            // Kỳ bình thường: dùng rateBefore hoặc rateAfter
+            const daysInPeriod = Math.floor(
+                (actualPeriodEnd.getTime() - currentDate.getTime()) / (1000 * 3600 * 24)
+            );
+            
+            if (daysInPeriod > 0) {
+                // Xác định lãi suất: nếu kỳ bắt đầu từ mốc thay đổi trở đi, dùng rateAfter
+                const useRateAfter = currentDate >= changeDateVN;
+                const currentRate = useRateAfter ? rateAfter : rateBefore;
+                const dailyRate = (currentRate / 100) / 365;
+                const periodInterest = Math.round(currentBalance * dailyRate * daysInPeriod);
+                
+                if (useRateAfter) {
+                    interestAfter += periodInterest;
+                } else {
+                    interestBefore += periodInterest;
+                }
+                
+                totalInterest += periodInterest;
+                currentBalance += periodInterest;
+                
+                // Lưu số dư tại mốc thay đổi nếu kỳ này kết thúc đúng tại mốc
+                if (!useRateAfter && actualPeriodEnd.getTime() === changeDateVN.getTime()) {
+                    balanceAtChange = currentBalance;
+                }
+            }
+        }
+
+        // Chuyển sang kỳ tiếp theo
+        currentDate = new Date(actualPeriodEnd);
+    }
+
+    return {
+        totalInterest,
+        interestBefore,
+        interestAfter,
+        balanceAtChange
+    };
+};
+
 export const formatDate = (dateString: string): string => {
   if (!dateString) return '';
   const date = toVNTime(dateString);

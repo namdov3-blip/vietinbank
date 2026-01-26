@@ -3,7 +3,7 @@ import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, BankTransaction, AuditLog, Settings } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
 import { toZonedTime, format as formatTz } from 'date-fns-tz';
-import { calculateInterest, getVNStartOfDay } from '../../../lib/utils/interest';
+import { calculateInterest, calculateInterestWithRateChange, getVNStartOfDay } from '../../../lib/utils/interest';
 
 const VN_TIMEZONE = 'Asia/Ho_Chi_Minh';
 
@@ -54,6 +54,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const project = await (Project as any).findById(transaction.projectId);
         const settings = await (Settings as any).findOne({ key: 'global' }) || { interestRate: 6.5 };
         const interestRate = settings.interestRate;
+        const hasRateChange = settings.interestRateChangeDate && 
+                               settings.interestRateBefore !== null && 
+                               settings.interestRateBefore !== undefined &&
+                               settings.interestRateAfter !== null && 
+                               settings.interestRateAfter !== undefined;
 
         const now = getVNNow();
         const previousStatus = transaction.status;
@@ -74,12 +79,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(400).json({ error: 'Không có ngày bắt đầu tính lãi' });
             }
             
-            const interest = calculateInterest(
-                transaction.compensation.totalApproved,
-                interestRate,
-                baseDateVN,
-                disbursementDateVN  // Use the set date instead of now
-            );
+            // Calculate interest with rate change if configured
+            let interest = 0;
+            if (hasRateChange) {
+                const interestResult = calculateInterestWithRateChange(
+                    transaction.compensation.totalApproved,
+                    baseDateVN,
+                    disbursementDateVN,
+                    settings.interestRateChangeDate,
+                    settings.interestRateBefore,
+                    settings.interestRateAfter
+                );
+                interest = interestResult.totalInterest;
+            } else {
+                interest = calculateInterest(
+                    transaction.compensation.totalApproved,
+                    interestRate,
+                    baseDateVN,
+                    disbursementDateVN
+                );
+            }
             const supplementary = transaction.supplementaryAmount || 0;
             const totalFinal = transaction.compensation.totalApproved + interest + supplementary;
 

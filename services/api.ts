@@ -222,6 +222,16 @@ export const settingsAPI = {
         fetchAPI<{ data: any }>('/settings/bank-interest-rate', {
             method: 'PUT',
             body: JSON.stringify({ bankInterestRate: rate, actor })
+        }),
+
+    updateRateChangeSettings: (settings: {
+        interestRateChangeDate?: string | null;
+        interestRateBefore?: number | null;
+        interestRateAfter?: number | null;
+    }) =>
+        fetchAPI<{ data: any }>('/settings/interest-rate', {
+            method: 'PUT',
+            body: JSON.stringify(settings)
         })
 };
 

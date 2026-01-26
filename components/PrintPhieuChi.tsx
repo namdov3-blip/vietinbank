@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Transaction, Project, User } from '../types';
-import { formatCurrency, formatDateForPrint, formatCurrencyToWords, calculateInterest, formatDate, getVNNow, getVNStartOfDay, fromVNTime, VN_TIMEZONE } from '../utils/helpers';
+import { formatCurrency, formatDateForPrint, formatCurrencyToWords, calculateInterest, calculateInterestWithRateChange, formatDate, getVNNow, getVNStartOfDay, fromVNTime, VN_TIMEZONE } from '../utils/helpers';
 import { format as formatTz } from 'date-fns-tz';
 import { Printer, Loader2, X, Edit2, Check } from 'lucide-react';
 import { api } from '../services/api';
@@ -10,6 +10,9 @@ interface PrintPhieuChiProps {
     transaction: Transaction;
     project: Project | undefined;
     interestRate: number;
+    interestRateChangeDate?: string | null;
+    interestRateBefore?: number | null;
+    interestRateAfter?: number | null;
     currentUser: User;
     onClose: () => void;
     onTransactionUpdated?: (transaction: Transaction) => void;
@@ -19,6 +22,9 @@ export const PrintPhieuChi: React.FC<PrintPhieuChiProps> = ({
     transaction,
     project,
     interestRate,
+    interestRateChangeDate,
+    interestRateBefore,
+    interestRateAfter,
     currentUser,
     onClose,
     onTransactionUpdated
@@ -40,7 +46,30 @@ export const PrintPhieuChi: React.FC<PrintPhieuChiProps> = ({
             ? getVNStartOfDay(transaction.disbursementDate) 
             : getVNStartOfDay(getVNNow()));
 
-    const interest = calculateInterest(transaction.compensation.totalApproved, interestRate, baseDate, interestEndDate);
+    // Calculate interest with rate change if configured
+    let interest = 0;
+    let interestBefore = 0;
+    let interestAfter = 0;
+    let hasRateChange = false;
+
+    if (interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null) {
+        // Use rate change calculation
+        const interestResult = calculateInterestWithRateChange(
+            transaction.compensation.totalApproved,
+            baseDate,
+            interestEndDate,
+            interestRateChangeDate,
+            interestRateBefore,
+            interestRateAfter
+        );
+        interest = interestResult.totalInterest;
+        interestBefore = interestResult.interestBefore;
+        interestAfter = interestResult.interestAfter;
+        hasRateChange = true;
+    } else {
+        // Use standard calculation
+        interest = calculateInterest(transaction.compensation.totalApproved, interestRate, baseDate, interestEndDate);
+    }
 
     const supplementary = transaction.supplementaryAmount || 0;
     const totalAmount = transaction.compensation.totalApproved + interest + supplementary;
@@ -48,6 +77,8 @@ export const PrintPhieuChi: React.FC<PrintPhieuChiProps> = ({
     // Formatted strings for details
     const approvedFormatted = formatCurrency(transaction.compensation.totalApproved);
     const interestFormatted = formatCurrency(interest);
+    const interestBeforeFormatted = formatCurrency(interestBefore);
+    const interestAfterFormatted = formatCurrency(interestAfter);
     const supplementaryFormatted = formatCurrency(supplementary);
     const totalFormatted = formatCurrency(totalAmount);
 
@@ -269,10 +300,27 @@ export const PrintPhieuChi: React.FC<PrintPhieuChiProps> = ({
                             <span>- Tiền phê duyệt:</span>
                             <span className="font-bold">{approvedFormatted}</span>
                         </div>
-                        <div className="flex justify-between text-xs">
-                            <span>- Lãi:</span>
-                            <span className="font-bold">{interestFormatted}</span>
-                        </div>
+                        {hasRateChange ? (
+                            <>
+                                <div className="flex justify-between text-xs">
+                                    <span>- Lãi (trước {interestRateChangeDate ? formatDate(interestRateChangeDate) : '01/01/2026'}):</span>
+                                    <span className="font-bold">{interestBeforeFormatted}</span>
+                                </div>
+                                <div className="flex justify-between text-xs">
+                                    <span>- Lãi (từ {interestRateChangeDate ? formatDate(interestRateChangeDate) : '01/01/2026'}):</span>
+                                    <span className="font-bold">{interestAfterFormatted}</span>
+                                </div>
+                                <div className="flex justify-between text-xs border-t border-slate-300 pt-1">
+                                    <span>- Tổng lãi:</span>
+                                    <span className="font-bold">{interestFormatted}</span>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="flex justify-between text-xs">
+                                <span>- Lãi:</span>
+                                <span className="font-bold">{interestFormatted}</span>
+                            </div>
+                        )}
                         <div className="flex justify-between text-xs">
                             <span>- Tiền bổ sung:</span>
                             <span className="font-bold">{supplementaryFormatted}</span>

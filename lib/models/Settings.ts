@@ -10,7 +10,10 @@ export interface IInterestHistoryLog {
 export interface ISettings extends Document {
     key: string;
     value: any;
-    interestRate: number;
+    interestRate: number; // Current rate (for backward compatibility)
+    interestRateChangeDate?: Date; // Ngày thay đổi lãi suất (ví dụ: 01/01/2026)
+    interestRateBefore?: number; // Lãi suất trước mốc (ví dụ: 0.1%)
+    interestRateAfter?: number; // Lãi suất sau mốc (ví dụ: 0.2%)
     interestHistory: IInterestHistoryLog[];
     bankOpeningBalance: number;
     bankInterestRate: number;
@@ -27,6 +30,9 @@ const InterestHistorySchema = new Schema<IInterestHistoryLog>({
 const SettingsSchema = new Schema<ISettings>({
     key: { type: String, default: 'global', unique: true },
     interestRate: { type: Number, default: 6.5 },
+    interestRateChangeDate: { type: Date }, // Ngày thay đổi lãi suất
+    interestRateBefore: { type: Number }, // Lãi suất trước mốc (%)
+    interestRateAfter: { type: Number }, // Lãi suất sau mốc (%)
     interestHistory: { type: [InterestHistorySchema], default: [] },
     bankOpeningBalance: { type: Number, default: 0 },
     bankInterestRate: { type: Number, default: 0.5 }, // Monthly interest rate

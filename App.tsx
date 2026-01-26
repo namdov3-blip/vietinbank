@@ -72,6 +72,10 @@ const App: React.FC = () => {
   const [interestRate, setInterestRate] = useState<number>(6.5);
   const [bankInterestRate, setBankInterestRate] = useState<number>(0.5);
   const [interestHistory, setInterestHistory] = useState<InterestHistoryLog[]>([]);
+  // Rate change settings
+  const [interestRateChangeDate, setInterestRateChangeDate] = useState<string | null>(null);
+  const [interestRateBefore, setInterestRateBefore] = useState<number | null>(null);
+  const [interestRateAfter, setInterestRateAfter] = useState<number | null>(null);
 
   // Load all data from API
   const loadAllData = useCallback(async (silent: boolean = false) => {
@@ -93,7 +97,16 @@ const App: React.FC = () => {
         api.bank.listTransactions().catch(() => ({ data: [] })),
         api.users.list().catch(() => ({ data: [] })),
         api.audit.list().catch(() => ({ data: [] })),
-        api.settings.getInterestRate().catch(() => ({ data: { interestRate: 6.5, bankInterestRate: 0.5, history: [] } }))
+        api.settings.getInterestRate().catch(() => ({ 
+          data: { 
+            interestRate: 6.5, 
+            bankInterestRate: 0.5, 
+            history: [],
+            interestRateChangeDate: null,
+            interestRateBefore: null,
+            interestRateAfter: null
+          } 
+        }))
       ]);
 
       setProjects(projectsRes.data || []);
@@ -105,6 +118,10 @@ const App: React.FC = () => {
       setInterestRate(settingsRes.data?.interestRate || 6.5);
       setBankInterestRate(settingsRes.data?.bankInterestRate || 0.5);
       setInterestHistory(settingsRes.data?.interestHistory || []);
+      // Load rate change settings
+      setInterestRateChangeDate(settingsRes.data?.interestRateChangeDate || null);
+      setInterestRateBefore(settingsRes.data?.interestRateBefore || null);
+      setInterestRateAfter(settingsRes.data?.interestRateAfter || null);
     } catch (err: any) {
       console.error('Failed to load data:', err);
       setError('Không thể tải dữ liệu. Vui lòng thử lại.');
@@ -391,6 +408,9 @@ const App: React.FC = () => {
           transactions={transactions}
           projects={projects}
           interestRate={interestRate}
+          interestRateChangeDate={interestRateChangeDate}
+          interestRateBefore={interestRateBefore}
+          interestRateAfter={interestRateAfter}
           bankAccount={bankAccount}
           setActiveTab={setActiveTab}
           currentUser={currentUser!}
@@ -452,6 +472,9 @@ const App: React.FC = () => {
           transactions={transactions}
           projects={projects}
           interestRate={interestRate}
+          interestRateChangeDate={interestRateChangeDate}
+          interestRateBefore={interestRateBefore}
+          interestRateAfter={interestRateAfter}
           currentUser={currentUser!}
           onSelect={setSelectedTransaction}
           searchTerm={transactionSearchTerm}
@@ -568,6 +591,9 @@ const App: React.FC = () => {
             transaction={selectedTransaction}
             project={projects.find(p => p.id === selectedTransaction.projectId || (p as any)._id === selectedTransaction.projectId)}
             interestRate={interestRate}
+            interestRateChangeDate={interestRateChangeDate}
+            interestRateBefore={interestRateBefore}
+            interestRateAfter={interestRateAfter}
             onClose={() => setSelectedTransaction(null)}
             onStatusChange={handleStatusChange}
             onRefund={handleRefundTransaction}

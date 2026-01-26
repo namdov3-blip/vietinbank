@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Transaction, TransactionStatus, User, AuditLogItem, BankTransactionType, Project } from '../types';
-import { formatCurrency, formatDate, formatDateForPrint, formatCurrencyToWords, calculateInterest, formatNumberWithComma, parseNumberFromComma, toVNTime, fromVNTime, VN_TIMEZONE } from '../utils/helpers';
+import { formatCurrency, formatDate, formatDateForPrint, formatCurrencyToWords, calculateInterest, calculateInterestWithRateChange, formatNumberWithComma, parseNumberFromComma, toVNTime, fromVNTime, VN_TIMEZONE } from '../utils/helpers';
 import { format as formatTz } from 'date-fns-tz';
 import { X, Wallet, FileText, CheckCircle, Clock, History, Scale, Printer, Undo2, ArrowDownCircle, Edit2, Save, Plus, Calendar, Loader2 } from 'lucide-react';
 import { GlassCard } from './GlassCard';
@@ -13,6 +13,9 @@ interface TransactionModalProps {
   transaction: Transaction | null;
   project?: Project;
   interestRate: number;
+  interestRateChangeDate?: string | null;
+  interestRateBefore?: number | null;
+  interestRateAfter?: number | null;
   onClose: () => void;
   onStatusChange: (id: string, status: TransactionStatus, disbursementDate?: string) => void;
   onRefund: (id: string, refundedAmount: number) => void;
@@ -26,6 +29,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   transaction,
   project,
   interestRate,
+  interestRateChangeDate,
+  interestRateBefore,
+  interestRateAfter,
   onClose,
   onStatusChange,
   onRefund,
@@ -108,18 +114,49 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   }
 
   // Calculate interest based on transaction status
-  // Match TransactionList logic: always recalculate for consistency
+  // Use rate change calculation if configured, otherwise use standard calculation
+  let interestBefore = 0;
+  let interestAfter = 0;
+  const hasRateChange = interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null;
+
   if (isDisbursed && effectiveTx.disbursementDate) {
     // CASE 1: Đã giải ngân -> Lãi tính đến ngày thực tế chi trả (đóng băng)
     calcEndDate = new Date(effectiveTx.disbursementDate);
-    interest = calculateInterest(effectiveTx.compensation.totalApproved, interestRate, baseDate, calcEndDate);
+    if (hasRateChange) {
+      const interestResult = calculateInterestWithRateChange(
+        effectiveTx.compensation.totalApproved,
+        baseDate,
+        calcEndDate,
+        interestRateChangeDate,
+        interestRateBefore,
+        interestRateAfter
+      );
+      interest = interestResult.totalInterest;
+      interestBefore = interestResult.interestBefore;
+      interestAfter = interestResult.interestAfter;
+    } else {
+      interest = calculateInterest(effectiveTx.compensation.totalApproved, interestRate, baseDate, calcEndDate);
+    }
   } else if (!isDisbursed) {
     // CASE 2: Chưa giải ngân -> Nếu đã đặt ngày chi trả thì tính đến ngày đó (preview), nếu không thì tính đến hiện tại
     if (effectiveTx.disbursementDate) {
       calcEndDate = new Date(effectiveTx.disbursementDate);
-      interest = calculateInterest(effectiveTx.compensation.totalApproved, interestRate, baseDate, calcEndDate);
     } else {
       calcEndDate = new Date();
+    }
+    if (hasRateChange) {
+      const interestResult = calculateInterestWithRateChange(
+        effectiveTx.compensation.totalApproved,
+        baseDate,
+        calcEndDate,
+        interestRateChangeDate,
+        interestRateBefore,
+        interestRateAfter
+      );
+      interest = interestResult.totalInterest;
+      interestBefore = interestResult.interestBefore;
+      interestAfter = interestResult.interestAfter;
+    } else {
       interest = calculateInterest(effectiveTx.compensation.totalApproved, interestRate, baseDate, calcEndDate);
     }
   }
@@ -409,10 +446,24 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 </div>
                 {/* Interest */}
                 <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                  <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">Lãi phát sinh ({interestRate}%)</p>
+                  <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+                    Lãi phát sinh {hasRateChange ? '' : `(${interestRate}%)`}
+                  </p>
                   <p className={`text-lg font-bold ${interest > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
                     {interest > 0 ? '+' : ''}{formatCurrency(interest)}
                   </p>
+                  {hasRateChange && (
+                    <div className="mt-2 space-y-1 pt-2 border-t border-slate-200">
+                      <div className="flex justify-between text-[10px] text-slate-600">
+                        <span>Trước {interestRateChangeDate ? formatDate(interestRateChangeDate) : '01/01/2026'} ({interestRateBefore}%):</span>
+                        <span className="font-bold text-rose-500">{formatCurrency(interestBefore)}</span>
+                      </div>
+                      <div className="flex justify-between text-[10px] text-slate-600">
+                        <span>Từ {interestRateChangeDate ? formatDate(interestRateChangeDate) : '01/01/2026'} ({interestRateAfter}%):</span>
+                        <span className="font-bold text-rose-500">{formatCurrency(interestAfter)}</span>
+                      </div>
+                    </div>
+                  )}
                   <div className="text-[10px] text-slate-500 mt-1 font-medium flex items-center gap-1">
                     <Clock size={10} />
                     {isDisbursed
@@ -800,6 +851,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
       {showPrintPreview && (
         <PrintPhieuChi
+          interestRateChangeDate={interestRateChangeDate}
+          interestRateBefore={interestRateBefore}
+          interestRateAfter={interestRateAfter}
           transaction={transaction}
           project={project}
           interestRate={interestRate}

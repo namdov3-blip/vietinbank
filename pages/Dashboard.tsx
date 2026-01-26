@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { GlassCard } from '../components/GlassCard';
 import { Transaction, TransactionStatus, Project, User, BankAccount } from '../types';
-import { formatCurrency, calculateInterest, formatDate } from '../utils/helpers';
+import { formatCurrency, calculateInterest, calculateInterestWithRateChange, formatDate } from '../utils/helpers';
 import {
   ComposedChart,
   Line,
@@ -32,12 +32,25 @@ interface DashboardProps {
   transactions: Transaction[];
   projects: Project[];
   interestRate: number;
+  interestRateChangeDate?: string | null;
+  interestRateBefore?: number | null;
+  interestRateAfter?: number | null;
   bankAccount: BankAccount;
   setActiveTab: (tab: string) => void;
   currentUser: User;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ transactions, projects, interestRate, bankAccount, setActiveTab, currentUser }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ 
+  transactions, 
+  projects, 
+  interestRate, 
+  interestRateChangeDate,
+  interestRateBefore,
+  interestRateAfter,
+  bankAccount, 
+  setActiveTab, 
+  currentUser 
+}) => {
   const [selectedProjectIds, setSelectedProjectIds] = React.useState<string[]>([]);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [chartDimensions, setChartDimensions] = useState({ width: 800, height: 450 }); // Giá trị mặc định hợp lý
@@ -46,6 +59,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, projects, in
   const [endDate, setEndDate] = useState<string>(''); // ISO yyyy-mm-dd
   const formattedStart = startDate ? formatDate(startDate) : '---';
   const formattedEnd = endDate ? formatDate(endDate) : '---';
+
+  // Helper function to calculate interest with rate change if configured
+  const calculateInterestSmart = React.useCallback((
+    principal: number,
+    baseDate: string | undefined,
+    endDate: Date
+  ): number => {
+    const hasRateChange = interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null;
+    if (hasRateChange) {
+      const interestResult = calculateInterestWithRateChange(
+        principal,
+        baseDate,
+        endDate,
+        interestRateChangeDate,
+        interestRateBefore,
+        interestRateAfter
+      );
+      return interestResult.totalInterest;
+    } else {
+      return calculateInterest(principal, interestRate, baseDate, endDate);
+    }
+  }, [interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter]);
 
   const getRelevantDate = React.useCallback((t: Transaction) => {
     const pIdStr = (t.projectId && (t.projectId as any)._id) ? (t.projectId as any)._id.toString() : t.projectId?.toString();
@@ -105,7 +140,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, projects, in
     const baseDate = t.effectiveInterestDate || project?.interestStartDate;
     let interest = 0;
     if (t.disbursementDate) {
-      interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+      interest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date(t.disbursementDate));
     }
     const supplementary = t.supplementaryAmount || 0;
     return acc + t.compensation.totalApproved + interest + supplementary;
@@ -117,7 +152,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, projects, in
   const statsPendingAmount = statsPendingTrans.reduce((acc, t) => {
     const project = projects.find(p => p.id === t.projectId);
     const baseDate = t.effectiveInterestDate || project?.interestStartDate;
-    const interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+    const interest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date());
     const supplementary = t.supplementaryAmount || 0;
     const transactionTotal = t.compensation.totalApproved + interest + supplementary;
     return acc + transactionTotal;
@@ -141,18 +176,44 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, projects, in
         const extractedInterest = (t as any).disbursedTotal - t.compensation.totalApproved - supplementary;
         lockedInterest += extractedInterest;
       } else {
-        const calculatedInterest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+        const calculatedInterest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date(t.disbursementDate));
         lockedInterest += calculatedInterest;
       }
     } else if (t.status !== TransactionStatus.DISBURSED) {
       // Lãi tạm tính (chỉ từ các giao dịch chưa giải ngân)
-      const tInterest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+      const tInterest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date());
       tempInterest += tInterest;
     }
   });
 
   const statsTotalInterest = tempInterest; // Chỉ trả về lãi tạm tính
   const statsLockedInterest = lockedInterest; // Lãi đã chốt (để hiển thị)
+
+  // Calculate breakdown for interest if rate change is configured
+  let interestBeforeTotal = 0;
+  let interestAfterTotal = 0;
+  const hasRateChange = interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null;
+  
+  if (hasRateChange) {
+    filteredTransactions.forEach(t => {
+      const project = projects.find(p => p.id === t.projectId);
+      const baseDate = t.effectiveInterestDate || project?.interestStartDate;
+      
+      if (t.status !== TransactionStatus.DISBURSED) {
+        // Only calculate for pending transactions (temp interest)
+        const interestResult = calculateInterestWithRateChange(
+          t.compensation.totalApproved,
+          baseDate,
+          new Date(),
+          interestRateChangeDate,
+          interestRateBefore,
+          interestRateAfter
+        );
+        interestBeforeTotal += interestResult.interestBefore;
+        interestAfterTotal += interestResult.interestAfter;
+      }
+    });
+  }
 
   // Tổng giá trị dự án = statsDisbursedAmount + statsPendingAmount
   // Using the same calculation as above for consistency
@@ -176,7 +237,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, projects, in
           const baseDate = t.effectiveInterestDate || project.interestStartDate;
           let interest = 0;
           if (t.disbursementDate) {
-            interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+            interest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date(t.disbursementDate));
           }
           const supplementary = t.supplementaryAmount || 0;
           return acc + t.compensation.totalApproved + interest + supplementary;
@@ -186,7 +247,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, projects, in
         .filter(t => t.status !== TransactionStatus.DISBURSED)
         .reduce((acc, t) => {
           const baseDate = t.effectiveInterestDate || project.interestStartDate;
-          const interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+          const interest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date());
           const supplementary = t.supplementaryAmount || 0;
           return acc + t.compensation.totalApproved + interest + supplementary;
         }, 0);
@@ -199,9 +260,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, projects, in
             const supplementary = t.supplementaryAmount || 0;
             return acc + ((t as any).disbursedTotal - t.compensation.totalApproved - supplementary);
           }
-          return acc + calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+          return acc + calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date(t.disbursementDate));
         } else if (t.status !== TransactionStatus.DISBURSED) {
-          return acc + calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+          return acc + calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date());
         }
         return acc;
       }, 0);
@@ -262,7 +323,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, projects, in
         <div className="flex items-center gap-2">
           <p className="text-xl font-semibold text-black tracking-tight">{value}</p>
         </div>
-        {subValue && <p className="text-[11px] font-medium text-slate-500 mt-1">{subValue}</p>}
+        {subValue && (
+          typeof subValue === 'string' ? (
+            <p className="text-[11px] font-medium text-slate-500 mt-1">{subValue}</p>
+          ) : (
+            <div className="text-[10px] font-medium text-slate-500 mt-1 space-y-0.5">{subValue}</div>
+          )
+        )}
       </div>
     </GlassCard>
   );
@@ -395,7 +462,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, projects, in
         <KPICard
           title="LÃI PHÁT SINH"
           value={formatCurrency(statsTotalInterest)}
-          subValue={statsLockedInterest > 0 ? `Đã chốt: ${formatCurrency(statsLockedInterest)}` : `Lãi suất: ${interestRate}%`}
+          subValue={
+            hasRateChange ? (
+              <>
+                <div>Trước {interestRateChangeDate ? formatDate(interestRateChangeDate) : '01/01/2026'} ({interestRateBefore}%): {formatCurrency(interestBeforeTotal)}</div>
+                <div>Từ {interestRateChangeDate ? formatDate(interestRateChangeDate) : '01/01/2026'} ({interestRateAfter}%): {formatCurrency(interestAfterTotal)}</div>
+                {statsLockedInterest > 0 && <div className="mt-1 pt-1 border-t border-slate-300">Đã chốt: {formatCurrency(statsLockedInterest)}</div>}
+              </>
+            ) : (
+              statsLockedInterest > 0 ? `Đã chốt: ${formatCurrency(statsLockedInterest)}` : `Lãi suất: ${interestRate}%`
+            )
+          }
           icon={PiggyBank}
           colorClass="bg-rose-600 text-rose-600"
         />

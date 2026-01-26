@@ -5,7 +5,7 @@ import { GlassCard } from '../components/GlassCard';
 import { StatusBadge } from '../components/StatusBadge';
 import { PrintPhieuChi } from '../components/PrintPhieuChi';
 import { PrintPhieuChiBatch } from '../components/PrintPhieuChiBatch';
-import { formatCurrency, formatDate, calculateInterest, exportTransactionsToExcel } from '../utils/helpers';
+import { formatCurrency, formatDate, calculateInterest, calculateInterestWithRateChange, exportTransactionsToExcel } from '../utils/helpers';
 import { Search, Filter, Download, Folder, Users, CheckCircle, Clock, DollarSign, PiggyBank, ChevronLeft, ChevronRight, Eye, FileText, Printer, Trash2 } from 'lucide-react';
 import api from '../services/api';
 
@@ -13,6 +13,9 @@ interface TransactionListProps {
   transactions: Transaction[];
   projects: Project[];
   interestRate: number;
+  interestRateChangeDate?: string | null;
+  interestRateBefore?: number | null;
+  interestRateAfter?: number | null;
   currentUser: User;
   onSelect: (t: Transaction) => void;
   searchTerm: string;
@@ -20,7 +23,19 @@ interface TransactionListProps {
   onDelete?: () => void; // Callback to refresh data after deletion
 }
 
-export const TransactionList: React.FC<TransactionListProps> = ({ transactions, projects, interestRate, currentUser, onSelect, searchTerm, setSearchTerm, onDelete }) => {
+export const TransactionList: React.FC<TransactionListProps> = ({ 
+  transactions, 
+  projects, 
+  interestRate, 
+  interestRateChangeDate,
+  interestRateBefore,
+  interestRateAfter,
+  currentUser, 
+  onSelect, 
+  searchTerm, 
+  setSearchTerm, 
+  onDelete 
+}) => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
   const [printTransaction, setPrintTransaction] = useState<Transaction | null>(null);
@@ -93,13 +108,26 @@ export const TransactionList: React.FC<TransactionListProps> = ({ transactions, 
     const notDisbursedItems = filtered.filter(t => t.status !== TransactionStatus.DISBURSED);
 
     // UPDATE: Disbursed Money includes interest paid + supplementary amount
+    const hasRateChange = interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null;
     const moneyDisbursed = disbursedItems.reduce((sum, t) => {
       const pIdStr = (t.projectId && (t.projectId as any)._id) ? (t.projectId as any)._id.toString() : t.projectId?.toString();
       const project = projects.find(p => (p.id === pIdStr || p._id === pIdStr));
       const baseDate = t.effectiveInterestDate || project?.interestStartDate || (project as any)?.startDate;
       let interest = 0;
       if (t.disbursementDate) {
-        interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+        if (hasRateChange) {
+          const interestResult = calculateInterestWithRateChange(
+            t.compensation.totalApproved,
+            baseDate,
+            new Date(t.disbursementDate),
+            interestRateChangeDate,
+            interestRateBefore,
+            interestRateAfter
+          );
+          interest = interestResult.totalInterest;
+        } else {
+          interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+        }
       }
       const supplementary = t.supplementaryAmount || 0;
       return sum + t.compensation.totalApproved + interest + supplementary;
@@ -113,7 +141,19 @@ export const TransactionList: React.FC<TransactionListProps> = ({ transactions, 
       // TẤT CẢ hồ sơ chưa giải ngân (PENDING + HOLD) đều phải được tính lãi nếu baseDate < hôm nay
       if (t.status !== TransactionStatus.DISBURSED) {
         const baseDate = t.effectiveInterestDate || project?.interestStartDate || (project as any)?.startDate;
-        interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+        if (hasRateChange) {
+          const interestResult = calculateInterestWithRateChange(
+            t.compensation.totalApproved,
+            baseDate,
+            new Date(),
+            interestRateChangeDate,
+            interestRateBefore,
+            interestRateAfter
+          );
+          interest = interestResult.totalInterest;
+        } else {
+          interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+        }
       }
       const supplementary = t.supplementaryAmount || 0;
       return sum + t.compensation.totalApproved + interest + supplementary;
@@ -132,10 +172,34 @@ export const TransactionList: React.FC<TransactionListProps> = ({ transactions, 
 
       if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
         // Lãi đã chốt (không tính vào tổng lãi PS)
-        lockedInterest += calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+        if (hasRateChange) {
+          const interestResult = calculateInterestWithRateChange(
+            t.compensation.totalApproved,
+            baseDate,
+            new Date(t.disbursementDate),
+            interestRateChangeDate,
+            interestRateBefore,
+            interestRateAfter
+          );
+          lockedInterest += interestResult.totalInterest;
+        } else {
+          lockedInterest += calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+        }
       } else if (t.status !== TransactionStatus.DISBURSED) {
         // Lãi tạm tính (chỉ từ các giao dịch chưa giải ngân)
-        tempInterest += calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+        if (hasRateChange) {
+          const interestResult = calculateInterestWithRateChange(
+            t.compensation.totalApproved,
+            baseDate,
+            new Date(),
+            interestRateChangeDate,
+            interestRateBefore,
+            interestRateAfter
+          );
+          tempInterest += interestResult.totalInterest;
+        } else {
+          tempInterest += calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+        }
       }
     });
 
@@ -413,12 +477,39 @@ export const TransactionList: React.FC<TransactionListProps> = ({ transactions, 
                 const baseDate = t.effectiveInterestDate || project?.interestStartDate || (project as any)?.startDate;
                 let currentInterest = 0;
 
+                // Use rate change calculation if configured
+                const hasRateChange = interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null;
+
                 if (isDisbursed && t.disbursementDate) {
                   // CASE 1: Đã giải ngân -> Lãi tính đến ngày thực tế chi trả (đóng băng)
-                  currentInterest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+                  if (hasRateChange) {
+                    const interestResult = calculateInterestWithRateChange(
+                      t.compensation.totalApproved,
+                      baseDate,
+                      new Date(t.disbursementDate),
+                      interestRateChangeDate,
+                      interestRateBefore,
+                      interestRateAfter
+                    );
+                    currentInterest = interestResult.totalInterest;
+                  } else {
+                    currentInterest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+                  }
                 } else if (!isDisbursed) {
                   // CASE 2: Chưa giải ngân (bao gồm cả PENDING & HOLD) -> Lãi tính đến hiện tại (tiếp tục chạy)
-                  currentInterest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+                  if (hasRateChange) {
+                    const interestResult = calculateInterestWithRateChange(
+                      t.compensation.totalApproved,
+                      baseDate,
+                      new Date(),
+                      interestRateChangeDate,
+                      interestRateBefore,
+                      interestRateAfter
+                    );
+                    currentInterest = interestResult.totalInterest;
+                  } else {
+                    currentInterest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+                  }
                 }
 
                 const supplementary = t.supplementaryAmount || 0;
