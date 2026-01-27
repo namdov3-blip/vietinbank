@@ -78,7 +78,12 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
   // Filter Data
   const filtered = useMemo(() => {
-    const term = searchTerm.toLowerCase();
+    // Hỗ trợ nhiều điều kiện, cách nhau bởi dấu "," hoặc ":"
+    const rawTerms = searchTerm
+      .split(/[,:\uFF0C]/) // bao gồm dấu phẩy tiếng Việt toàn chiều
+      .map(t => t.trim())
+      .filter(t => t.length > 0);
+
     return transactions.filter(t => {
       const project = resolveProject(t);
       const relevantDate = getRelevantDate(t, project);
@@ -87,17 +92,24 @@ export const TransactionList: React.FC<TransactionListProps> = ({
       // Determine which date is being displayed to allow searching by it
       const displayDateStr = relevantDate ? formatDate(relevantDate) : '';
 
-      return (
-        t.status.toLowerCase().includes(term) || // Search by Status
-        t.household.name.toLowerCase().includes(term) || // Search by Name
-        t.household.cccd.includes(searchTerm) ||
-        t.household.decisionNumber.toLowerCase().includes(term) || // Search by Decision Number
-        t.id.toLowerCase().includes(term) || // Search by Transaction ID
-        displayDateStr.includes(searchTerm) || // Search by Displayed Date (Expected or Actual)
-        (t.paymentType && t.paymentType.toLowerCase().includes(term)) || // Search by Payment Type
-        (typeof t.projectId === 'string' && t.projectId.toLowerCase().includes(term)) ||
-        project?.code.toLowerCase().includes(term)
-      );
+      // Nếu không nhập gì thì không lọc theo search
+      if (rawTerms.length === 0) return true;
+
+      // Một giao dịch phải thỏa MỌI điều kiện (AND) trong chuỗi search
+      return rawTerms.every(termRaw => {
+        const term = termRaw.toLowerCase();
+        return (
+          t.status.toLowerCase().includes(term) || // Search by Status
+          t.household.name.toLowerCase().includes(term) || // Search by Name
+          t.household.cccd.includes(termRaw) || // CCCD giữ nguyên (thường nhập số)
+          t.household.decisionNumber.toLowerCase().includes(term) || // Search by Decision Number
+          t.id.toLowerCase().includes(term) || // Search by Transaction ID
+          displayDateStr.includes(termRaw) || // Search by Displayed Date (Expected or Actual)
+          (t.paymentType && t.paymentType.toLowerCase().includes(term)) || // Search by Payment Type
+          (typeof t.projectId === 'string' && t.projectId.toLowerCase().includes(term)) ||
+          project?.code.toLowerCase().includes(term)
+        );
+      });
     });
   }, [transactions, searchTerm, resolveProject, getRelevantDate, isWithinDateRange]);
 
@@ -318,7 +330,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               <input
                 type="text"
-                placeholder="Tìm theo Trạng thái, Tên, Mã GD, Số QĐ..."
+                placeholder="Tìm theo Trạng thái, Tên, Mã GD, Số QĐ... (có thể nhập nhiều điều kiện, cách nhau bởi dấu , hoặc :)"
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm font-bold text-black focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-slate-400"
                 value={searchTerm}
                 onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
