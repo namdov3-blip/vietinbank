@@ -3,7 +3,7 @@ import connectDB from '../../../../lib/mongodb';
 import { Transaction, Project, BankTransaction, AuditLog, Settings } from '../../../../lib/models';
 import { verifyQRToken, authMiddleware } from '../../../../lib/auth';
 import { toZonedTime } from 'date-fns-tz';
-import { calculateInterest, getVNStartOfDay, fromVNTime } from '../../../../lib/utils/interest';
+import { calculateInterest, calculateInterestWithRateChange, getVNStartOfDay, fromVNTime } from '../../../../lib/utils/interest';
 
 const VN_TIMEZONE = 'Asia/Ho_Chi_Minh';
 
@@ -52,6 +52,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const project = await (Project as any).findById(transaction.projectId);
             const settings = await (Settings as any).findOne({ key: 'global' }) || { interestRate: 6.5 };
             const interestRate = settings.interestRate;
+            const hasRateChange = settings.interestRateChangeDate &&
+                settings.interestRateBefore !== null &&
+                settings.interestRateBefore !== undefined &&
+                settings.interestRateAfter !== null &&
+                settings.interestRateAfter !== undefined;
 
             // Use disbursementDate embedded in QR token if available (from phiếu chi preview),
             // otherwise fall back to transaction.disbursementDate, then to "today" in VN timezone.
@@ -61,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 : (transaction.disbursementDate
                     ? getVNStartOfDay(transaction.disbursementDate)
                     : getVNStartOfDay(now));
-            
+
             const baseDate = transaction.effectiveInterestDate || project?.interestStartDate;
             const baseDateVN = baseDate ? getVNStartOfDay(baseDate) : null;
             
@@ -69,12 +74,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(400).json({ error: 'Không có ngày bắt đầu tính lãi' });
             }
             
-            const interest = calculateInterest(
-                transaction.compensation.totalApproved,
-                interestRate,
-                baseDateVN,
-                interestEndDate
-            );
+            // Tính lãi với mốc thay đổi nếu đã cấu hình, giống với logic giải ngân thủ công
+            let interest = 0;
+            if (hasRateChange) {
+                const interestResult = calculateInterestWithRateChange(
+                    transaction.compensation.totalApproved,
+                    baseDateVN,
+                    interestEndDate,
+                    settings.interestRateChangeDate!,
+                    settings.interestRateBefore!,
+                    settings.interestRateAfter!
+                );
+                interest = interestResult.totalInterest;
+            } else {
+                interest = calculateInterest(
+                    transaction.compensation.totalApproved,
+                    interestRate,
+                    baseDateVN,
+                    interestEndDate
+                );
+            }
             const supplementary = transaction.supplementaryAmount || 0;
             const totalAmount = transaction.compensation.totalApproved + interest + supplementary;
 
@@ -107,6 +126,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const project = await (Project as any).findById(transaction.projectId);
             const settings = await (Settings as any).findOne({ key: 'global' }) || { interestRate: 6.5 };
             const interestRate = settings.interestRate;
+            const hasRateChange = settings.interestRateChangeDate &&
+                settings.interestRateBefore !== null &&
+                settings.interestRateBefore !== undefined &&
+                settings.interestRateAfter !== null &&
+                settings.interestRateAfter !== undefined;
 
             const now = getVNNow();
             const baseDate = transaction.effectiveInterestDate || project?.interestStartDate;
@@ -125,12 +149,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     ? getVNStartOfDay(transaction.disbursementDate)
                     : getVNStartOfDay(now));
 
-            const interest = calculateInterest(
-                transaction.compensation.totalApproved,
-                interestRate,
-                baseDateVN,
-                interestEndDate
-            );
+            // Tính lãi với mốc thay đổi nếu có cấu hình
+            let interest = 0;
+            if (hasRateChange) {
+                const interestResult = calculateInterestWithRateChange(
+                    transaction.compensation.totalApproved,
+                    baseDateVN,
+                    interestEndDate,
+                    settings.interestRateChangeDate!,
+                    settings.interestRateBefore!,
+                    settings.interestRateAfter!
+                );
+                interest = interestResult.totalInterest;
+            } else {
+                interest = calculateInterest(
+                    transaction.compensation.totalApproved,
+                    interestRate,
+                    baseDateVN,
+                    interestEndDate
+                );
+            }
             const supplementary = transaction.supplementaryAmount || 0;
             const totalFinal = transaction.compensation.totalApproved + interest + supplementary;
 
