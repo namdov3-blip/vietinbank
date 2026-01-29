@@ -1,8 +1,33 @@
 import React, { useRef, useState, useMemo } from 'react';
 import api from '../services/api';
 import { GlassCard } from '../components/GlassCard';
-import { formatDate, formatCurrency, calculateInterest, calculateInterestWithRateChange } from '../utils/helpers';
-import { Plus, FolderKanban, Coins, Loader2, X, Check, FileSpreadsheet, Edit2, Eye, Calendar, Save, Tag, Type, Trash2, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  formatDate,
+  formatCurrency,
+  calculateInterest,
+  calculateInterestWithRateChange,
+  exportProjectsToExcel
+} from '../utils/helpers';
+import {
+  Plus,
+  FolderKanban,
+  Coins,
+  Loader2,
+  X,
+  Check,
+  FileSpreadsheet,
+  Edit2,
+  Eye,
+  Calendar,
+  Save,
+  Tag,
+  Type,
+  Trash2,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  Download
+} from 'lucide-react';
 import { Project, Transaction, TransactionStatus } from '../types';
 
 interface ProjectsProps {
@@ -155,6 +180,18 @@ export const Projects: React.FC<ProjectsProps> = ({
   React.useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm]);
+
+  // Download filtered projects to Excel
+  const handleDownload = () => {
+    exportProjectsToExcel(
+      filteredProjects,
+      transactions,
+      interestRate,
+      interestRateChangeDate,
+      interestRateBefore,
+      interestRateAfter
+    );
+  };
 
   // Stats Calculation - tính tổng giá trị thực tế bao gồm tiền bổ sung + lãi phát sinh
   const totalProjects = filteredProjects.length;
@@ -337,14 +374,23 @@ export const Projects: React.FC<ProjectsProps> = ({
           <h2 className="text-2xl font-medium text-black tracking-tight">Quản lý dự án</h2>
           <p className="text-sm font-medium text-slate-500 mt-1">Danh sách dự án & tiến độ đền bù</p>
         </div>
-        <button
-          onClick={handleNewProjectClick}
-          disabled={isUploading}
-          className="flex items-center gap-2 px-5 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
-        >
-          {isUploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} strokeWidth={3} />}
-          <span>{isUploading ? 'ĐANG XỬ LÝ...' : 'DỰ ÁN MỚI'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleDownload}
+            className="p-2 bg-white/60 hover:bg-white border border-slate-200 rounded-lg text-slate-600 transition-all shadow-sm group"
+            title="Tải xuống Excel (lọc theo điều kiện hiện tại)"
+          >
+            <Download size={18} className="group-hover:text-blue-600" />
+          </button>
+          <button
+            onClick={handleNewProjectClick}
+            disabled={isUploading}
+            className="flex items-center gap-2 px-5 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {isUploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} strokeWidth={3} />}
+            <span>{isUploading ? 'ĐANG XỬ LÝ...' : 'DỰ ÁN MỚI'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Stats Boxes */}

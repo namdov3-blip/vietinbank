@@ -606,6 +606,203 @@ export const exportTransactionsToExcel = (transactions: Transaction[], projects:
   URL.revokeObjectURL(url);
 };
 
+/**
+ * Export Projects (Dự án) list to Excel (.xlsx)
+ * - Tôn trọng lãi suất thay đổi (rate change) tương tự Dashboard/Projects UI
+ * - Dùng cùng logic tính tổng giá trị dự án thực tế (bao gồm lãi + bổ sung)
+ */
+export const exportProjectsToExcel = (
+  projects: Project[],
+  transactions: Transaction[],
+  interestRate: number,
+  interestRateChangeDate?: string | null,
+  interestRateBefore?: number | null,
+  interestRateAfter?: number | null
+) => {
+  // Helper: interest with optional rate change
+  const hasRateChange =
+    !!interestRateChangeDate &&
+    interestRateBefore !== null &&
+    interestRateBefore !== undefined &&
+    interestRateAfter !== null &&
+    interestRateAfter !== undefined;
+
+  const calculateInterestSmart = (
+    principal: number,
+    baseDate: string | undefined,
+    endDate: Date
+  ): number => {
+    if (hasRateChange) {
+      const interestResult = calculateInterestWithRateChange(
+        principal,
+        baseDate,
+        endDate,
+        interestRateChangeDate as string,
+        interestRateBefore as number,
+        interestRateAfter as number
+      );
+      return interestResult.totalInterest;
+    }
+    return calculateInterest(principal, interestRate, baseDate, endDate);
+  };
+
+  // Helper: get all transactions for a project (support both id/_id)
+  const getProjectTransactions = (project: Project): Transaction[] => {
+    return transactions.filter(t => {
+      const pIdStr =
+        (t.projectId && (t.projectId as any)._id)
+          ? (t.projectId as any)._id.toString()
+          : t.projectId?.toString();
+      return pIdStr === project.id || pIdStr === (project as any)._id;
+    });
+  };
+
+  // Helper: calculate actual total value of a project (matching Projects UI)
+  const getProjectActualTotal = (project: Project): number => {
+    const projectTrans = getProjectTransactions(project);
+
+    const actualTotal = projectTrans.reduce((sum, t) => {
+      const supplementary = t.supplementaryAmount || 0;
+
+      // For disbursed transactions: prefer disbursedTotal (matching Dashboard/Projects)
+      if (t.status === TransactionStatus.DISBURSED && (t as any).disbursedTotal) {
+        return sum + (t as any).disbursedTotal;
+      }
+
+      const baseDate =
+        (t as any).effectiveInterestDate ||
+        (project as any).interestStartDate ||
+        (project as any).startDate;
+
+      let interest = 0;
+      if (t.status === TransactionStatus.DISBURSED && (t as any).disbursementDate) {
+        interest = calculateInterestSmart(
+          t.compensation.totalApproved,
+          baseDate,
+          new Date((t as any).disbursementDate)
+        );
+      } else if (t.status !== TransactionStatus.DISBURSED) {
+        interest = calculateInterestSmart(
+          t.compensation.totalApproved,
+          baseDate,
+          new Date()
+        );
+      }
+
+      return sum + t.compensation.totalApproved + interest + supplementary;
+    }, 0);
+
+    return actualTotal > 0 ? actualTotal : (project as any).totalBudget || 0;
+  };
+
+  // Helper: calculate disbursed amount (for completion %)
+  const getProjectDisbursed = (project: Project): number => {
+    const projectTrans = getProjectTransactions(project);
+
+    const disbursed = projectTrans
+      .filter(t => t.status === TransactionStatus.DISBURSED)
+      .reduce((acc, t) => {
+        if ((t as any).disbursedTotal) {
+          return acc + (t as any).disbursedTotal;
+        }
+        const supplementary = t.supplementaryAmount || 0;
+        const baseDate =
+          (t as any).effectiveInterestDate ||
+          (project as any).interestStartDate ||
+          (project as any).startDate;
+        const interest = (t as any).disbursementDate
+          ? calculateInterestSmart(
+              t.compensation.totalApproved,
+              baseDate,
+              new Date((t as any).disbursementDate)
+            )
+          : 0;
+        return acc + t.compensation.totalApproved + interest + supplementary;
+      }, 0);
+
+    return disbursed;
+  };
+
+  // Build rows for Excel
+  const rows: any[][] = [];
+
+  rows.push([
+    'BÁO CÁO TỔNG HỢP DỰ ÁN',
+    `Ngày xuất: ${formatTz(getVNNow(), 'dd/MM/yyyy', { timeZone: VN_TIMEZONE })}`
+  ]);
+  rows.push([]);
+  rows.push([
+    'STT',
+    'Mã dự án',
+    'Tên dự án',
+    'Ngày Upload',
+    'Ngày GN & Tính lãi',
+    'Tổng ngân sách ban đầu',
+    'Tổng giá trị dự án (gốc + lãi + bổ sung)',
+    '% Tiến độ (đã GN / tổng)',
+    'Số hồ sơ đã GN',
+    'Số hồ sơ chưa GN'
+  ]);
+
+  projects.forEach((project, index) => {
+    const projectTrans = getProjectTransactions(project);
+    const actualTotal = getProjectActualTotal(project);
+    const disbursed = getProjectDisbursed(project);
+
+    const completedCount = projectTrans.filter(
+      t => t.status === TransactionStatus.DISBURSED
+    ).length;
+    const pendingCount = projectTrans.filter(
+      t => t.status !== TransactionStatus.DISBURSED
+    ).length;
+
+    const percent =
+      actualTotal > 0 ? (disbursed / actualTotal) * 100 : 0;
+    const percentStr = `${percent.toFixed(1)}%`;
+
+    rows.push([
+      index + 1,
+      (project as any).code || '',
+      (project as any).name || '',
+      (project as any).uploadDate
+        ? formatDate((project as any).uploadDate)
+        : '',
+      (project as any).interestStartDate
+        ? formatDate((project as any).interestStartDate)
+        : '',
+      (project as any).totalBudget || 0,
+      actualTotal,
+      percentStr,
+      completedCount,
+      pendingCount
+    ]);
+  });
+
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Du_an');
+
+  const wbout = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([wbout], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+
+  const fileName = `Bao_cao_du_an_${formatTz(getVNNow(), 'yyyy-MM-dd', {
+    timeZone: VN_TIMEZONE
+  })}.xlsx`;
+
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+
+  link.href = url;
+  link.download = fileName;
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
 export const exportAuditLogsToExcel = (auditLogs: AuditLogItem[]) => {
   const rows = [];
   rows.push(['NHẬT KÝ HOẠT ĐỘNG HỆ THỐNG (AUDIT LOG)', `Ngày xuất: ${formatTz(getVNNow(), 'dd/MM/yyyy', { timeZone: VN_TIMEZONE })}`]);
