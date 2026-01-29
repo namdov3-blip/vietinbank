@@ -478,7 +478,14 @@ const downloadCSV = (content: string, fileName: string) => {
   document.body.removeChild(link);
 };
 
-export const exportTransactionsToExcel = (transactions: Transaction[], projects: Project[], interestRate: number) => {
+export const exportTransactionsToExcel = (
+  transactions: Transaction[], 
+  projects: Project[], 
+  interestRate: number,
+  interestRateChangeDate?: string | null,
+  interestRateBefore?: number | null,
+  interestRateAfter?: number | null
+) => {
   // 1. Calculate Stats for ALL transactions (Total)
   const uniqueProjects = new Set(transactions.map(t => t.projectId)).size;
   const disbursedItems = transactions.filter(t => t.status === TransactionStatus.DISBURSED);
@@ -487,18 +494,41 @@ export const exportTransactionsToExcel = (transactions: Transaction[], projects:
   // Helper to calculate total payout (approved + interest + supplementary)
   const calculateTotalPayout = (t: Transaction) => {
     const project = projects.find(p => p.id === t.projectId);
+    const principalBase = (t as any).principalForInterest ?? t.compensation.totalApproved;
     const baseDate = t.effectiveInterestDate || project?.interestStartDate;
     let interest = 0;
 
-    if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
-      // Đã giải ngân: tính lãi đến ngày giải ngân thực tế
-      interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
-    } else if (t.status !== TransactionStatus.DISBURSED) {
-      // Chưa giải ngân (PENDING + HOLD): tính lãi đến ngày hiện tại
-      interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+    if (interestRateChangeDate && interestRateBefore !== null && interestRateBefore !== undefined && interestRateAfter !== null && interestRateAfter !== undefined) {
+      // Có thay đổi lãi suất
+      if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
+        interest = calculateInterestWithRateChange(
+          principalBase,
+          interestRateBefore,
+          interestRateAfter,
+          baseDate,
+          new Date(interestRateChangeDate),
+          new Date(t.disbursementDate)
+        );
+      } else if (t.status !== TransactionStatus.DISBURSED) {
+        interest = calculateInterestWithRateChange(
+          principalBase,
+          interestRateBefore,
+          interestRateAfter,
+          baseDate,
+          new Date(interestRateChangeDate),
+          new Date()
+        );
+      }
+    } else {
+      // Không có thay đổi lãi suất
+      if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
+        interest = calculateInterest(principalBase, interestRate, baseDate, new Date(t.disbursementDate));
+      } else if (t.status !== TransactionStatus.DISBURSED) {
+        interest = calculateInterest(principalBase, interestRate, baseDate, new Date());
+      }
     }
     const supplementary = t.supplementaryAmount || 0;
-    return t.compensation.totalApproved + interest + supplementary;
+    return principalBase + interest + supplementary;
   };
 
   const moneyDisbursed = disbursedItems.reduce((sum, t) => sum + calculateTotalPayout(t), 0);
@@ -506,14 +536,40 @@ export const exportTransactionsToExcel = (transactions: Transaction[], projects:
 
   const totalInterest = transactions.reduce((sum, t) => {
     const project = projects.find(p => p.id === t.projectId);
+    const principalBase = (t as any).principalForInterest ?? t.compensation.totalApproved;
     const baseDate = t.effectiveInterestDate || project?.interestStartDate;
+    let interest = 0;
 
-    if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
-      return sum + calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
-    } else if (t.status !== TransactionStatus.DISBURSED) {
-      return sum + calculateInterest(t.compensation.totalApproved, interestRate, baseDate);
+    if (interestRateChangeDate && interestRateBefore !== null && interestRateBefore !== undefined && interestRateAfter !== null && interestRateAfter !== undefined) {
+      // Có thay đổi lãi suất
+      if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
+        interest = calculateInterestWithRateChange(
+          principalBase,
+          interestRateBefore,
+          interestRateAfter,
+          baseDate,
+          new Date(interestRateChangeDate),
+          new Date(t.disbursementDate)
+        );
+      } else if (t.status !== TransactionStatus.DISBURSED) {
+        interest = calculateInterestWithRateChange(
+          principalBase,
+          interestRateBefore,
+          interestRateAfter,
+          baseDate,
+          new Date(interestRateChangeDate),
+          new Date()
+        );
+      }
+    } else {
+      // Không có thay đổi lãi suất
+      if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
+        interest = calculateInterest(principalBase, interestRate, baseDate, new Date(t.disbursementDate));
+      } else if (t.status !== TransactionStatus.DISBURSED) {
+        interest = calculateInterest(principalBase, interestRate, baseDate, new Date());
+      }
     }
-    return sum;
+    return sum + interest;
   }, 0);
 
   // 2. Build CSV Content
@@ -560,15 +616,42 @@ export const exportTransactionsToExcel = (transactions: Transaction[], projects:
     const project = projects.find(p => p.id === t.projectId);
 
     // Calculate individual interest
+    const principalBase = (t as any).principalForInterest ?? t.compensation.totalApproved;
     const baseDate = t.effectiveInterestDate || project?.interestStartDate;
     let currentInterest = 0;
-    if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
-      currentInterest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
-    } else if (t.status === TransactionStatus.HOLD) {
-      currentInterest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date());
+    
+    if (interestRateChangeDate && interestRateBefore !== null && interestRateBefore !== undefined && interestRateAfter !== null && interestRateAfter !== undefined) {
+      // Có thay đổi lãi suất
+      if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
+        currentInterest = calculateInterestWithRateChange(
+          principalBase,
+          interestRateBefore,
+          interestRateAfter,
+          baseDate,
+          new Date(interestRateChangeDate),
+          new Date(t.disbursementDate)
+        );
+      } else if (t.status !== TransactionStatus.DISBURSED) {
+        currentInterest = calculateInterestWithRateChange(
+          principalBase,
+          interestRateBefore,
+          interestRateAfter,
+          baseDate,
+          new Date(interestRateChangeDate),
+          new Date()
+        );
+      }
+    } else {
+      // Không có thay đổi lãi suất
+      if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
+        currentInterest = calculateInterest(principalBase, interestRate, baseDate, new Date(t.disbursementDate));
+      } else if (t.status !== TransactionStatus.DISBURSED) {
+        currentInterest = calculateInterest(principalBase, interestRate, baseDate, new Date());
+      }
     }
+    
     const supplementary = t.supplementaryAmount || 0;
-    const totalPayout = t.compensation.totalApproved + currentInterest + supplementary;
+    const totalPayout = principalBase + currentInterest + supplementary;
 
     // Determine date display
     let displayDateStr = '';
@@ -590,7 +673,7 @@ export const exportTransactionsToExcel = (transactions: Transaction[], projects:
       t.household.decisionNumber,
       formatDate(t.household.decisionDate),
       displayDateStr,
-      t.compensation.totalApproved,
+      principalBase,
       currentInterest,
       supplementary,
       totalPayout,

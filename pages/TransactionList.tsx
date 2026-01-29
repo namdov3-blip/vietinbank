@@ -98,6 +98,31 @@ export const TransactionList: React.FC<TransactionListProps> = ({
       // Một giao dịch phải thỏa MỌI điều kiện (AND) trong chuỗi search
       return rawTerms.every(termRaw => {
         const term = termRaw.toLowerCase();
+        
+        // Tính toán số tiền để search
+        const principalBase = (t as any).principalForInterest ?? t.compensation.totalApproved;
+        const baseDate = t.effectiveInterestDate || project?.interestStartDate;
+        let interest = 0;
+        if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
+          interest = calculateInterest(principalBase, interestRate, baseDate, new Date(t.disbursementDate));
+        } else if (t.status !== TransactionStatus.DISBURSED) {
+          interest = calculateInterest(principalBase, interestRate, baseDate, new Date());
+        }
+        const supplementary = t.supplementaryAmount || 0;
+        const totalAmount = principalBase + interest + supplementary;
+        
+        // Format số tiền để search (loại bỏ dấu phẩy và khoảng trắng)
+        const formatAmountForSearch = (amount: number) => {
+          return Math.round(amount).toString().replace(/\s/g, '');
+        };
+        const totalApprovedStr = formatAmountForSearch(t.compensation.totalApproved || 0);
+        const interestStr = formatAmountForSearch(interest);
+        const totalAmountStr = formatAmountForSearch(totalAmount);
+        const supplementaryStr = formatAmountForSearch(supplementary);
+        
+        // Loại bỏ dấu phẩy và khoảng trắng từ search term để so sánh số
+        const numericTerm = termRaw.replace(/[,.\s]/g, '');
+        
         return (
           t.status.toLowerCase().includes(term) || // Search by Status
           t.household.name.toLowerCase().includes(term) || // Search by Name
@@ -107,7 +132,12 @@ export const TransactionList: React.FC<TransactionListProps> = ({
           displayDateStr.includes(termRaw) || // Search by Displayed Date (Expected or Actual)
           (t.paymentType && t.paymentType.toLowerCase().includes(term)) || // Search by Payment Type
           (typeof t.projectId === 'string' && t.projectId.toLowerCase().includes(term)) ||
-          project?.code.toLowerCase().includes(term)
+          project?.code.toLowerCase().includes(term) ||
+          // Search by Amount (số tiền)
+          totalApprovedStr.includes(numericTerm) || // Tổng phê duyệt
+          interestStr.includes(numericTerm) || // Lãi phát sinh
+          totalAmountStr.includes(numericTerm) || // Tổng thực nhận
+          supplementaryStr.includes(numericTerm) // Tiền bổ sung
         );
       });
     });
@@ -275,8 +305,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   };
 
   const handleDownload = () => {
-    // Export ALL transactions as requested, not just filtered ones
-    exportTransactionsToExcel(transactions, projects, interestRate);
+    // Export filtered transactions based on current search and date filters
+    exportTransactionsToExcel(filtered, projects, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter);
   };
 
   const StatBox = ({ label, value, subValue, icon: Icon, colorClass }: any) => (
@@ -362,7 +392,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               <input
                 type="text"
-                placeholder="Tìm theo Trạng thái, Tên, Mã GD, Số QĐ... (có thể nhập nhiều điều kiện, cách nhau bởi dấu , hoặc :)"
+                placeholder="Tìm theo Trạng thái, Tên, Mã GD, Số QĐ, Số tiền... (có thể nhập nhiều điều kiện, cách nhau bởi dấu , hoặc :)"
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm font-bold text-black focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-slate-400"
                 value={searchTerm}
                 onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
