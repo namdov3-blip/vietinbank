@@ -290,7 +290,7 @@ export const Projects: React.FC<ProjectsProps> = ({
       
       // Call onImport to trigger refresh in parent component
       if (onImport) {
-        onImport(previewData.project, previewData.transactions, mode);
+        onImport(previewData.project, previewData.transactions);
       }
     } catch (error: any) {
       const errorMessage = error.message || 'Unknown error';
