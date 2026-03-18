@@ -34,11 +34,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // Get settings
-        const settings = await Settings.findOne({ key: 'global' }) || { interestRate: 6.5 };
-        const interestRate = settings.interestRate;
-        const hasRateChange = settings.interestRateChangeDate &&
-                              settings.interestRateBefore !== null && settings.interestRateBefore !== undefined &&
-                              settings.interestRateAfter !== null && settings.interestRateAfter !== undefined;
+        // NOTE: Keep settingsDoc typed as the Mongoose document (or null) to avoid union-type property errors in TS.
+        const settingsDoc = await Settings.findOne({ key: 'global' });
+        const interestRate = settingsDoc?.interestRate ?? 6.5;
+        const interestRateChangeDate = settingsDoc?.interestRateChangeDate;
+        const interestRateBefore = settingsDoc?.interestRateBefore;
+        const interestRateAfter = settingsDoc?.interestRateAfter;
+        const hasRateChange = !!interestRateChangeDate &&
+                              interestRateBefore !== null && interestRateBefore !== undefined &&
+                              interestRateAfter !== null && interestRateAfter !== undefined;
 
         // GET - Calculate and return interest summary
         if (req.method === 'GET') {
@@ -68,9 +72,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             t.compensation.totalApproved,
                             baseDate,
                             new Date(t.disbursementDate),
-                            settings.interestRateChangeDate,
-                            settings.interestRateBefore,
-                            settings.interestRateAfter
+                            interestRateChangeDate!,
+                            interestRateBefore!,
+                            interestRateAfter!
                         );
                         interest = result.totalInterest;
                     } else {
@@ -85,9 +89,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             principalBase,
                             baseDate,
                             now,
-                            settings.interestRateChangeDate,
-                            settings.interestRateBefore,
-                            settings.interestRateAfter
+                            interestRateChangeDate!,
+                            interestRateBefore!,
+                            interestRateAfter!
                         );
                         interest = result.totalInterest;
                     } else {
@@ -162,9 +166,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             principalBase,
                             effectiveStart,
                             monthEnd,
-                            settings.interestRateChangeDate,
-                            settings.interestRateBefore,
-                            settings.interestRateAfter
+                            interestRateChangeDate!,
+                            interestRateBefore!,
+                            interestRateAfter!
                         );
                         interest = result.totalInterest;
                     } else {

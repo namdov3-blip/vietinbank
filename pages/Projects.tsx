@@ -1,7 +1,7 @@
 import React, { useRef, useState, useMemo } from 'react';
 import api from '../services/api';
 import { GlassCard } from '../components/GlassCard';
-import { formatDate, formatCurrency, calculateInterest, calculateInterestWithRateChange, exportProjectsToExcel } from '../utils/helpers';
+import { formatDate, formatCurrency, calculateInterest, calculateInterestWithRateChange, exportProjectsToExcel, roundTo2 } from '../utils/helpers';
 import { Plus, FolderKanban, Coins, Loader2, X, Check, FileSpreadsheet, Edit2, Eye, Calendar, Save, Tag, Type, Trash2, Search, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { Project, Transaction, TransactionStatus } from '../types';
 
