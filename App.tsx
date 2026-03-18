@@ -318,9 +318,8 @@ const App: React.FC = () => {
   const handleStatusChange = async (id: string, newStatus: TransactionStatus, disbursementDate?: string) => {
     try {
       await api.transactions.updateStatus(id, newStatus, currentUser?.name || 'Unknown', disbursementDate);
-      // Reload transactions and bank data
       const [txRes, balanceRes, bankTxRes] = await Promise.all([
-        api.transactions.list(),
+        api.transactions.list({ limit: 1000 }),
         api.bank.getBalance(),
         api.bank.listTransactions()
       ]);
@@ -338,9 +337,8 @@ const App: React.FC = () => {
   const handleRefundTransaction = async (id: string, refundedAmount: number) => {
     try {
       await api.transactions.refund(id, currentUser?.name || 'Unknown', refundedAmount);
-      // Reload transactions and bank data
       const [txRes, balanceRes, bankTxRes] = await Promise.all([
-        api.transactions.list(),
+        api.transactions.list({ limit: 1000 }),
         api.bank.getBalance(),
         api.bank.listTransactions()
       ]);
@@ -357,7 +355,7 @@ const App: React.FC = () => {
   const handleUpdateTransaction = async (updatedTransaction: Transaction) => {
     try {
       await api.transactions.update(updatedTransaction.id, updatedTransaction);
-      const txRes = await api.transactions.list();
+      const txRes = await api.transactions.list({ limit: 1000 });
       setTransactions(txRes.data);
     } catch (err: any) {
       console.error('Update transaction failed:', err);
@@ -426,10 +424,9 @@ const App: React.FC = () => {
           onImport={handleImportProject}
           onUpdateProject={async (p) => {
             await api.projects.update(p.id, p);
-            // Reload both projects and transactions to reflect updated interestStartDate
             const [projectsRes, transactionsRes] = await Promise.all([
               api.projects.list(),
-              api.transactions.list()
+              api.transactions.list({ limit: 1000 })
             ]);
             setProjects(projectsRes.data);
             setTransactions(transactionsRes.data);

@@ -167,8 +167,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         // Loại bỏ dấu phẩy và khoảng trắng từ search term để so sánh số
         const numericTerm = termRaw.replace(/[,.\s]/g, '');
         
+        const effectiveStatusStr = getEffectiveStatus(t);
         return (
-          t.status.toLowerCase().includes(term) || // Search by Status
+          effectiveStatusStr.toLowerCase().includes(term) || // Search by effective Status (point-in-time)
           t.household.name.toLowerCase().includes(term) || // Search by Name
           t.household.cccd.includes(termRaw) || // CCCD giữ nguyên (thường nhập số)
           t.household.decisionNumber.toLowerCase().includes(term) || // Search by Decision Number
@@ -185,7 +186,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         );
       });
     });
-  }, [transactions, searchTerm, resolveProject, getRelevantDate, isWithinDateRange]);
+  }, [transactions, searchTerm, resolveProject, getRelevantDate, isWithinDateRange, getEffectiveStatus]);
 
   // Statistics Calculations based on Filtered Data
   const stats = useMemo(() => {
@@ -690,12 +691,14 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 const supplementary = t.supplementaryAmount || 0;
                 const totalAvailable = principalBase + currentInterest + supplementary;
                 
-                // Hiển thị: Nếu đã rút một phần thì tổng chi trả = withdrawnAmount, ngược lại = totalAvailable hoặc disbursedTotal
-                const displayTotalPaid = (t as any).withdrawnAmount 
-                  ? (t as any).withdrawnAmount 
-                  : (isDisbursed && (t as any).disbursedTotal) 
+                // Tổng chi trả: luôn hiển thị giá trị hiện tại (gốc + lãi + bổ sung)
+                // Với giao dịch đã GN có disbursedTotal thì dùng disbursedTotal (đã chốt tại thời điểm GN)
+                // Với giao dịch chưa GN (kể cả đã rút một phần): hiển thị totalAvailable = principalBase + lãi + bổ sung
+                // → đảm bảo SUM(Tổng chi trả) cho chưa GN = stats "Tiền chưa GN"
+                const displayTotalPaid = (isDisbursed && (t as any).disbursedTotal) 
                     ? (t as any).disbursedTotal 
                     : totalAvailable;
+                const withdrawnAmount = (t as any).withdrawnAmount || 0;
                 
                 // Tiền còn lại: chỉ hiển thị nếu đã rút một phần
                 // Tính tổng tiền thực nhận mới (đã bao gồm cả lãi mới phát sinh từ ngày rút đến hiện tại)
@@ -777,7 +780,10 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-800 border-r border-slate-200">
-                      {formatCurrency(t.compensation.totalApproved)}
+                      {formatCurrency(principalBase)}
+                      {(t as any).principalForInterest && (t as any).principalForInterest !== t.compensation.totalApproved && (
+                        <span className="block text-[10px] font-medium text-slate-400">Gốc: {formatCurrency(t.compensation.totalApproved)}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-rose-600 border-r border-slate-200">
                       {currentInterest > 0 ? `+${formatCurrency(currentInterest)}` : '-'}
@@ -790,7 +796,10 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       ) : '-'}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-blue-700 border-r border-slate-200 bg-blue-50/30">
-                      {formatCurrency(displayTotalPaid)}
+                      <span className="block">{formatCurrency(displayTotalPaid)}</span>
+                      {withdrawnAmount > 0 && !isDisbursed && (
+                        <span className="block text-[10px] font-medium text-orange-600">Đã rút: {formatCurrency(withdrawnAmount)}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right font-bold border-r border-slate-200">
                       {remainingCol !== null ? (

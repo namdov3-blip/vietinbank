@@ -715,6 +715,7 @@ export const exportTransactionsToExcel = (
     'Tổng phê duyệt',
     'Lãi phát sinh',
     'Tiền bổ sung',
+    'Đã rút',
     'Tổng chi trả',
     'Tiền còn lại',
     'Trạng thái'
@@ -768,12 +769,13 @@ export const exportTransactionsToExcel = (
     // Ensure all values are properly converted to avoid [object Object]
     const projectCode = project ? (typeof project.code === 'string' ? project.code : String(project.code || '')) : (typeof t.projectId === 'string' ? t.projectId : String(t.projectId || ''));
     
-    // Logic tính tổng chi trả giống với bảng (displayTotalPaid) - Y XÌ BẢNG
-    const displayTotalPaid = (t as any).withdrawnAmount 
-      ? (t as any).withdrawnAmount 
-      : (isDisbursed && (t as any).disbursedTotal) 
+    // Tổng chi trả: giá trị hiện tại (gốc + lãi + bổ sung), khớp với stats box
+    // Với giao dịch đã GN có disbursedTotal thì dùng disbursedTotal (đã chốt)
+    // Với giao dịch chưa GN: luôn dùng totalAvailable để SUM khớp stats "Tiền chưa GN"
+    const displayTotalPaid = (isDisbursed && (t as any).disbursedTotal) 
         ? (t as any).disbursedTotal 
         : totalAvailable;
+    const withdrawnAmountVal = (t as any).withdrawnAmount || 0;
     
     // Tiền còn lại: chỉ hiển thị nếu đã rút một phần - Y XÌ BẢNG
     const remainingCol = (t as any).remainingAfterWithdraw !== undefined && (t as any).withdrawnAmount
@@ -792,6 +794,7 @@ export const exportTransactionsToExcel = (
       Number(principalBase) || 0,
       Number(currentInterest) || 0,
       Number(supplementary) || 0,
+      withdrawnAmountVal > 0 ? Number(withdrawnAmountVal) : '',
       Number(displayTotalPaid) || 0,
       remainingCol !== null ? Number(remainingCol) || 0 : '',
       String(effectiveStatus || '')
